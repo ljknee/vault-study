@@ -361,3 +361,178 @@ Common authentication issues and their solutions:
    $ vault token lookup
    # Review the policies attached to your token
    ```
+
+# Understanding Vault Authentication and Secret Retrieval Using the HTTP API
+
+Authentication and secret retrieval through Vault's HTTP API provides a flexible way to interact with Vault programmatically. This guide will walk you through the process of authenticating with Vault and retrieving secrets using its REST API endpoints.
+
+## Understanding Vault's API Structure
+
+Vault's HTTP API follows RESTful principles and uses a consistent structure. All API endpoints begin with `/v1/`, indicating the API version. The authentication endpoints are located under `/v1/auth/`, while secret engines are accessed through their respective paths.
+
+## Authentication Using Okta
+
+Let's start with authenticating using Okta credentials. The process involves sending a POST request to the Okta auth endpoint with your credentials.
+
+### Preparing the Authentication Request
+
+First, you'll need to create a JSON file containing your credentials. This file (password.json) should contain:
+
+```json
+{
+    "password": "your_password_here"
+}
+```
+
+### Making the Authentication Request
+
+You can authenticate using curl in two ways:
+
+```bash
+# Basic authentication request
+$ curl --request POST \
+    --data @password.json \
+    http://127.0.0.1:8200/v1/auth/okta/login/kaung@vault.local
+
+# Authentication request with formatted JSON output using jq
+$ curl --request POST \
+    --data @password.json \
+    http://127.0.0.1:8200/v1/auth/okta/login/kaung@vault.local | jq
+```
+
+The response will look something like this:
+
+```json
+{
+  "request_id": "f00341c1-fad5-c6e8-6371-86b58d17be06",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 0,
+  "data": null,
+  "wrap_info": null,
+  "warnings": null,
+  "auth": {
+    "client_token": "s.xxxxxxxxxxx",
+    "accessor": "xxx.yyyyyyyyyyy",
+    "policies": ["default"],
+    "token_policies": ["default"],
+    "metadata": {
+      "username": "kaung@vault.local"
+    },
+    "lease_duration": 2764800,
+    "renewable": true,
+    "entity_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "token_type": "service",
+    "orphan": true
+  }
+}
+```
+
+Understanding the response:
+- The `client_token` is your authentication token (starts with "s.")
+- `lease_duration` indicates how long the token is valid (in seconds)
+- `renewable` shows if the token can be renewed
+- `policies` lists the policies attached to this token
+
+## Retrieving Secrets Using the Token
+
+Once you have authenticated and received a token, you can use it to retrieve secrets from Vault. The token is passed in the `X-Vault-Token` header.
+
+### Basic Secret Retrieval
+
+```bash
+# Retrieve secret without formatting
+$ curl --header "X-Vault-Token: s.xxxxxxxxxxx" \
+    http://127.0.0.1:8200/v1/secret/data/app01
+
+# Retrieve secret with JSON formatting
+$ curl --header "X-Vault-Token: s.xxxxxxxxxxx" \
+    http://127.0.0.1:8200/v1/secret/data/app01 | jq
+```
+
+The response will look like this:
+
+```json
+{
+  "request_id": "f00341c1-fad5-c6e8-6371-86b58d17be06",
+  "lease_id": "",
+  "renewable": false,
+  "lease_duration": 0,
+  "data": {
+    "data": {
+      "key1": "value1",
+      "key2": "value2"
+    },
+    "metadata": {
+      "created_time": "2024-02-07T10:00:00.000Z",
+      "deletion_time": "",
+      "destroyed": false,
+      "version": 1
+    }
+  }
+}
+```
+
+Understanding the secret response:
+- The actual secret data is nested under `data.data`
+- Metadata about the secret is available under `data.metadata`
+- `version` indicates which version of the secret you're viewing
+- `created_time` shows when this version was created
+
+## Best Practices for API Usage
+
+### Security Considerations
+
+1. Token Management
+   - Always store tokens securely
+   - Never log or expose tokens in error messages
+   - Implement proper token rotation
+
+2. Request Handling
+   - Use HTTPS in production environments
+   - Implement proper error handling
+   - Add request timeouts
+   - Consider rate limiting
+
+3. Error Handling
+   - Handle common HTTP status codes:
+     - 200: Success
+     - 403: Permission denied
+     - 404: Path not found
+     - 500: Server error
+
+### Example Error Response
+
+When an error occurs, Vault returns a structured error response:
+
+```json
+{
+  "errors": [
+    "permission denied"
+  ]
+}
+```
+
+## Practical Implementation Tips
+
+### Curl Command Structure
+
+When working with Vault's API, structure your curl commands for readability:
+
+```bash
+curl --request POST \
+     --header "X-Vault-Token: ${VAULT_TOKEN}" \
+     --header "Content-Type: application/json" \
+     --data @payload.json \
+     http://127.0.0.1:8200/v1/path/to/endpoint
+```
+
+### Using Environment Variables
+
+Store your Vault token in an environment variable for easier use:
+
+```bash
+export VAULT_TOKEN="s.xxxxxxxxxxx"
+curl --header "X-Vault-Token: ${VAULT_TOKEN}" \
+    http://127.0.0.1:8200/v1/secret/data/app01
+```
