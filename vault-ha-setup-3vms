@@ -1,0 +1,201 @@
+# HashiCorp Vault Production Deployment Guide (Rocky Linux)
+
+## **1. System Requirements**
+- **OS**: Rocky Linux 8/9
+- **CPU**: 4 vCPUs (minimum per node)
+- **RAM**: 8GB (recommended per node)
+- **Storage**: 50GB+ (depends on secret storage size)
+- **Network**: Ensure firewall allows TCP 8200 (Vault API) and 8201 (cluster communication)
+
+## **2. Pre-Installation Setup (Repeat on Each Node)**
+### **Update System Packages**
+```bash
+sudo dnf update -y
+sudo dnf install -y epel-release
+```
+
+### **Set Hostname and Configure Firewall**
+```bash
+sudo hostnamectl set-hostname vault-node-1  # Change per node (vault-node-2, vault-node-3)
+sudo firewall-cmd --add-port=8200/tcp --permanent
+sudo firewall-cmd --add-port=8201/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+### **Install Required Dependencies**
+```bash
+sudo dnf install -y unzip jq policycoreutils-python-utils
+```
+
+## **3. Install HashiCorp Vault (Repeat on Each Node)**
+### **Add HashiCorp Repository & Install Vault**
+```bash
+sudo dnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+sudo dnf install -y vault
+```
+
+### **Verify Installation**
+```bash
+vault --version
+```
+
+## **4. Configure Vault for HA Setup**
+### **Create Vault Configuration File**
+```bash
+sudo mkdir -p /etc/vault /opt/vault/data
+sudo chown -R vault:vault /opt/vault
+sudo chmod 750 /opt/vault/data
+```
+
+Create and edit `/etc/vault/config.hcl` (Modify per node):
+```hcl
+ui = true
+
+storage "raft" {
+  path    = "/opt/vault/data"
+  node_id = "vault-node-1"  # Change per node (vault-node-2, vault-node-3)
+}
+
+listener "tcp" {
+  address     = "0.0.0.0:8200"
+  tls_disable = "false"
+  tls_cert_file = "/etc/vault/certs/vault.crt"
+  tls_key_file  = "/etc/vault/certs/vault.key"
+}
+
+api_addr     = "https://vault-node-1:8200"
+cluster_addr = "https://vault-node-1:8201"
+```
+
+### **Configure HA Cluster (Repeat on Each Node)**
+Each additional node should have the same configuration, but with a unique `node_id`. Ensure nodes are in the same raft cluster.
+
+```bash
+vault operator raft join https://vault-node-1:8200
+```
+
+## **5. Setup Vault as a Systemd Service (Repeat on Each Node)**
+### **Create a Vault Service File**
+```bash
+sudo tee /etc/systemd/system/vault.service <<EOF
+[Unit]
+Description=HashiCorp Vault - A Tool for Managing Secrets
+Requires=network-online.target
+After=network-online.target
+
+[Service]
+User=vault
+Group=vault
+ExecStart=/usr/bin/vault server -config=/etc/vault/config.hcl
+ExecReload=/bin/kill --signal HUP $MAINPID
+KillMode=process
+Restart=on-failure
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+### **Enable and Start Vault Service**
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now vault
+sudo systemctl status vault
+```
+
+## **6. Initialize and Unseal Vault (Only on First Node)**
+```bash
+vault operator init
+```
+Copy and store the unseal keys and root token securely. Then, unseal Vault on each node:
+```bash
+vault operator unseal
+```
+Repeat for each Vault node.
+
+## **7. Enable LDAP Authentication**
+```bash
+vault auth enable ldap
+vault write auth/ldap/config \
+  url="ldap://ad.example.com" \
+  binddn="CN=admin,CN=Users,DC=example,DC=com" \
+  bindpass="password" \
+  userdn="CN=Users,DC=example,DC=com" \
+  groupdn="CN=Groups,DC=example,DC=com" \
+  groupfilter="(member={{.UserName}})" \
+  username_as_alias="true"
+```
+
+## **8. Role-Based Access Control (RBAC)**
+### **Create Policies**
+#### Regional Roles
+```hcl
+path "secret/data/MNEA/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+path "secret/data/MOAI/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+path "secret/data/MELA/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+path "secret/data/MANA/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+```
+
+#### Customer-Based Roles
+```hcl
+path "secret/data/customers/*" {
+  capabilities = ["read", "list", "create", "update", "delete"]
+}
+```
+
+### **Map AD Groups to Policies**
+```bash
+vault write auth/ldap/groups/MNEA policies=MNEA-role
+vault write auth/ldap/groups/MOAI policies=MOAI-role
+vault write auth/ldap/groups/MELA policies=MELA-role
+vault write auth/ldap/groups/MANA policies=MANA-role
+vault write auth/ldap/groups/Customers policies=customer-role
+```
+
+## **9. Backup & Monitoring**
+### **Automate Backups**
+```bash
+vault operator raft snapshot save /backup/vault-backup.snap
+```
+### **Enable Telemetry for Monitoring**
+Edit `/etc/vault/config.hcl`:
+```hcl
+telemetry {
+  prometheus_retention_time = "30s"
+}
+```
+Restart Vault:
+```bash
+sudo systemctl restart vault
+```
+
+## **10. Bulk Migration of Secrets from Teampass**
+### **Using Python**
+```python
+import csv
+import subprocess
+
+VAULT_ADDR = "https://vault.example.com:8200"
+VAULT_TOKEN = "your-root-token"
+
+with open("secrets.csv", newline='') as csvfile:
+    reader = csv.reader(csvfile)
+    for row in reader:
+        key, username, password = row
+        cmd = f'vault kv put secret/{key} username="{username}" password="{password}"'
+        subprocess.run(cmd, shell=True, env={"VAULT_ADDR": VAULT_ADDR, "VAULT_TOKEN": VAULT_TOKEN})
+```
+
+---
+
+This guide ensures a **secure, high-availability HashiCorp Vault deployment** on **Rocky Linux**, supporting **LDAP authentication, clustering, automated backups, and failover handling**.
+
