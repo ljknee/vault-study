@@ -217,20 +217,147 @@ token_type                default
    $ vault auth tune -default-lease-ttl=12h auth-path/
    ```
 
-## Conclusion
+# Practical Guide to Vault Authentication Using the CLI
 
-Understanding and properly configuring authentication methods is fundamental to Vault security. By following this guide and examining the command outputs, you've learned how to:
-- Enable and disable auth methods
-- Configure custom paths and descriptions
-- Manage users and roles
-- Set up application authentication
-- Follow best practices for security
+Authentication in HashiCorp Vault is a fundamental aspect of daily operations. Whether you're a system administrator, developer, or DevOps engineer, understanding how to authenticate with Vault through the command line interface (CLI) is essential. In this guide, we'll explore various authentication methods and their practical usage.
 
-Remember to always follow the principle of least privilege and regularly review your authentication configurations to maintain a secure environment.
+## Understanding Vault Authentication Flow
 
-## Additional Resources
+Before diving into specific commands, it's important to understand that Vault authentication follows a token-based system. When you authenticate successfully using any method, Vault issues a token that is then used for subsequent operations. This token can be stored locally, making future authentications seamless.
 
-- HashiCorp Vault Documentation
-- Vault Auth Methods Guide
-- Vault Policy Documentation
-- Vault API Documentation
+## Token Storage and Local Authentication
+
+One of the most convenient features of Vault is its ability to store authentication tokens locally. When you first authenticate, Vault stores the token in a local file, typically located at `~/.vault-token`. This means you don't need to authenticate again until the token expires. Let's explore this behavior:
+
+```bash
+# Initial authentication using Okta
+$ vault login -method=okta username=kaung@vault.local
+Password (will be hidden): ********
+Success! You are now authenticated. The token details are:
+Key                    Value
+---                    -----
+token                  hvs.XXXXXXXXXXXX
+token_accessor         XXXXXXXXXXXXX
+token_duration        768h
+token_renewable       true
+token_policies        ["default"]
+identity_policies     []
+policies              ["default"]
+
+# Subsequent commands won't require authentication
+$ vault secrets list
+Path          Type         Description
+----          ----         -----------
+cubbyhole/    cubbyhole   per-token private secret storage
+identity/     identity    identity store
+secret/       kv          key/value secret storage
+sys/          system      system endpoints used for control, policy and debugging
+```
+
+## Managing Authentication Methods
+
+Vault supports multiple authentication methods that can be enabled or disabled as needed. Here's how to manage them:
+
+### Enabling Authentication Methods
+
+To enable a new authentication method, use the `vault auth enable` command:
+
+```bash
+$ vault auth enable aws
+Success! Enabled aws auth method at: aws/
+```
+
+This command enables AWS authentication, allowing AWS IAM roles and users to authenticate with Vault.
+
+### Disabling Authentication Methods
+
+If you need to remove an authentication method, use the `vault auth disable` command:
+
+```bash
+$ vault auth disable aws
+Success! Disabled the auth method (if it existed) at: aws/
+```
+
+It's important to note that disabling an auth method will:
+- Invalidate all existing credentials using that method
+- Remove the configuration for that auth method
+- Require reconfiguration if you enable it again
+
+### Viewing Available Authentication Methods and Policies
+
+To understand what authentication methods and policies are available:
+
+```bash
+$ vault policy list
+default
+root
+secret-policy
+admin-policy
+
+# This shows all available policies in your Vault instance
+```
+
+## Using Username/Password Authentication
+
+The userpass authentication method is one of the simplest to understand and use:
+
+```bash
+$ vault login -method=userpass username=kaung
+Password (will be hidden): ********
+Success! You are now authenticated. The token details are:
+Key                    Value
+---                    -----
+token                  hvs.XXXXXXXXXXXX
+token_accessor         XXXXXXXXXXXXX
+token_duration        768h
+token_renewable       true
+token_policies        ["default"]
+identity_policies     []
+policies              ["default"]
+```
+
+## Best Practices for CLI Authentication
+
+When using Vault authentication through the CLI, consider these best practices:
+
+1. **Token Lifecycle Management**: Regularly rotate your tokens and avoid using long-lived tokens when possible.
+
+2. **Method Selection**: Choose the appropriate authentication method based on your use case:
+   - Use OIDC/Okta for human users in enterprise environments
+   - Use AppRole for application authentication
+   - Use AWS IAM for AWS infrastructure
+   - Use Username/Password for simple setups or testing
+
+3. **Security Considerations**: 
+   - Never share token files between users
+   - Set appropriate token TTLs (Time To Live)
+   - Use the principle of least privilege when assigning policies
+
+4. **Token Storage**: 
+   - Keep the ~/.vault-token file secure
+   - Consider using environment variables in CI/CD pipelines
+   - Clear tokens when no longer needed using `vault token revoke`
+
+## Troubleshooting Authentication Issues
+
+Common authentication issues and their solutions:
+
+1. **Token Expired**
+   If you see "permission denied" errors, your token might have expired. Simply authenticate again:
+   ```bash
+   $ vault login -method=<your-auth-method>
+   ```
+
+2. **Invalid Credentials**
+   Double-check your credentials and ensure the authentication method is properly configured:
+   ```bash
+   $ vault auth list
+   # Verify the auth method is enabled and properly configured
+   ```
+
+3. **Policy Restrictions**
+   If you can authenticate but not perform certain actions, check your token's policies:
+   ```bash
+   $ vault token lookup
+   # Review the policies attached to your token
+   ```
